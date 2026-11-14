@@ -141,7 +141,7 @@ public class UserDirectoryService {
         return new PasswordResetResponse(password);
     }
 
-    /** 404 pour un utilisateur inexistant OU appartenant à un autre cabinet : on ne révèle rien. */
+/** 404 pour un utilisateur inexistant OU appartenant à un autre cabinet : on ne révèle rien. */
     private KeycloakUser requireUserOfCurrentFirm(String userId) {
         ResponseStatusException notFound = new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found.");
         try {
@@ -151,7 +151,7 @@ public class UserDirectoryService {
         }
         UUID lawFirmId = TenantContext.requireLawFirmId();
         KeycloakUser user = keycloak.findUser(userId).orElseThrow(() -> notFound);
-        if (!lawFirmId.toString().equalsIgnoreCase(user.attribute("lawFirmId"))) {
+        if (!keycloak.isUserInLawFirm(user, lawFirmId)) {
             throw notFound;
         }
         return user;
@@ -169,9 +169,13 @@ public class UserDirectoryService {
     }
 
     private UserResponse toResponse(KeycloakUser user, String role) {
-        return new UserResponse(user.id(), user.username(), user.email(), user.firstName(), user.lastName(),
-                !Boolean.FALSE.equals(user.enabled()), role, user.attribute("clientId"));
-    }
+            String clientId = user.attribute("clientId");
+            if ((clientId == null || clientId.isBlank()) && "CLIENT".equals(role)) {
+                clientId = user.id();
+            }
+            return new UserResponse(user.id(), user.username(), user.email(), user.firstName(), user.lastName(),
+                    !Boolean.FALSE.equals(user.enabled()), role, clientId);
+        }
 
     private String generatePassword() {
         StringBuilder password = new StringBuilder(GENERATED_PASSWORD_LENGTH);

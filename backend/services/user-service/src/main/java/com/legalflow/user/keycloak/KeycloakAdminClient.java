@@ -35,7 +35,8 @@ public class KeycloakAdminClient {
 
     private static final ParameterizedTypeReference<List<KeycloakUser>> USER_LIST = new ParameterizedTypeReference<>() {
     };
-    private static final ParameterizedTypeReference<Map<String, Object>> RAW_MAP = new ParameterizedTypeReference<>() {
+    private static final ParameterizedTypeReference<Map<String, Object>> RAW_MAP = new ParameterizedTypeReference<>() {};
+    private static final ParameterizedTypeReference<List<KeycloakGroup>> GROUP_LIST = new ParameterizedTypeReference<>() {
     };
 
     private final RestClient restClient;
@@ -50,9 +51,12 @@ public class KeycloakAdminClient {
         this.properties = properties;
     }
 
-    /** Utilisateurs dont l'attribut lawFirmId correspond au cabinet donné. */
+    /** Utilisateurs dont l'attribut lawFirmId correspond au cabinet OU membres d'un groupe portant ce lawFirmId. */
     public List<KeycloakUser> findUsersByLawFirm(UUID lawFirmId) {
-        List<KeycloakUser> users = call(() -> restClient.get()
+        Map<String, KeycloakUser> byId = new LinkedHashMap<>();
+
+        // 1. Utilisateurs ayant l'attribut direct lawFirmId
+        List<KeycloakUser> directUsers = call(() -> restClient.get()
                 .uri(uriBuilder -> uriBuilder.path("/admin/realms/{realm}/users")
                         .queryParam("q", "lawFirmId:" + lawFirmId)
                         .queryParam("max", 1000)
@@ -61,7 +65,66 @@ public class KeycloakAdminClient {
                 .header(HttpHeaders.AUTHORIZATION, bearer())
                 .retrieve()
                 .body(USER_LIST));
-        return users == null ? List.of() : users;
+        if (directUsers != null) {
+            directUsers.forEach(user -> byId.put(user.id(), user));
+        }
+
+        // 2. Membres des groupes Keycloak portant l'attribut lawFirmId (ex: groupe cabinetA)
+        for (String groupId : findGroupIdsByLawFirm(lawFirmId)) {
+            List<KeycloakUser> groupMembers = call(() -> restClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/admin/realms/{realm}/groups/{groupId}/members")
+                            .queryParam("max", 1000)
+                            .queryParam("briefRepresentation", false)
+                            .build(properties.realm(), groupId))
+                    .header(HttpHeaders.AUTHORIZATION, bearer())
+                    .retrieve()
+                    .body(USER_LIST));
+            if (groupMembers != null) {
+                groupMembers.forEach(user -> byId.putIfAbsent(user.id(), user));
+            }
+        }
+
+        return List.copyOf(byId.values());
+    }
+
+    /** Vérifie si un utilisateur appartient au cabinet (via attribut direct ou via un groupe comme cabinetA). */
+    public boolean isUserInLawFirm(KeycloakUser user, UUID lawFirmId) {
+        if (lawFirmId.toString().equalsIgnoreCase(user.attribute("lawFirmId"))) {
+            return true;
+        }
+        return findUsersByLawFirm(lawFirmId).stream()
+                .anyMatch(member -> member.id().equals(user.id()));
+    }
+
+    private Set<String> findGroupIdsByLawFirm(UUID lawFirmId) {
+        List<KeycloakGroup> groups = call(() -> restClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/admin/realms/{realm}/groups")
+                        .queryParam("max", 1000)
+                        .queryParam("briefRepresentation", false)
+                        .build(properties.realm()))
+                .header(HttpHeaders.AUTHORIZATION, bearer())
+                .retrieve()
+                .body(GROUP_LIST));
+        Set<String> matchingGroupIds = new LinkedHashSet<>();
+        collectMatchingGroups(groups, lawFirmId.toString(), matchingGroupIds);
+        return matchingGroupIds;
+    }
+
+    private void collectMatchingGroups(List<KeycloakGroup> groups, String targetLawFirmId, Set<String> result) {
+        if (groups == null) {
+            return;
+        }
+        for (KeycloakGroup group : groups) {
+            if (group.id() != null && group.attributes() != null) {
+                List<String> firmValues = group.attributes().get("lawFirmId");
+                if (firmValues != null && firmValues.stream()
+                        .filter(v -> v != null)
+                        .anyMatch(v -> targetLawFirmId.equalsIgnoreCase(v.trim()))) {
+                    result.add(group.id());
+                }
+            }
+            collectMatchingGroups(group.subGroups(), targetLawFirmId, result);
+        }
     }
 
     /** Identifiants des utilisateurs qui ont un rôle realm donné (tous cabinets confondus). */
@@ -316,5 +379,8 @@ public class KeycloakAdminClient {
         } catch (RestClientException exception) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Keycloak is unreachable.");
         }
+    }
+
+    private record KeycloakGroup(String id, Map<String, List<String>> attributes, List<KeycloakGroup> subGroups) {
     }
 }

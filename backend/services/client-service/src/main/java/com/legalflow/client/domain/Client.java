@@ -15,8 +15,14 @@ import java.util.UUID;
 public class Client {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
+
+    @PrePersist
+    public void ensureId() {
+        if (this.id == null) {
+            this.id = UUID.randomUUID();
+        }
+    }
 
     @Column(nullable = false)
     private UUID lawFirmId;
@@ -54,6 +60,10 @@ public class Client {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
+    public void setId(UUID id) {
+        this.id = id;
+    }
+    
     protected Client() {
     }
 

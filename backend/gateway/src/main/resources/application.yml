@@ -8,7 +8,30 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://keycloak:8080/realms/legalflow/protocol/openid-connect/certs}
+          jwk-set-uri: ${SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI:http://legalflow-keycloak:8080/realms/legalflow/protocol/openid-connect/certs}
+
+  cloud:
+    gateway:
+      routes:
+        # Route 1: Redirection de /api/users vers l'Admin API de Keycloak
+        - id: keycloak-users-route
+          uri: http://legalflow-keycloak:8080
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - RewritePath=/api/users(?<segment>/?.*), /admin/realms/legalflow/users$$\{segment}
+
+        # Route 2: Service Client
+        - id: client-service-route
+          uri: http://legalflow-client-service:8081
+          predicates:
+            - Path=/api/clients/**
+
+        # Route 3: Service Dossiers (Case)
+        - id: case-service-route
+          uri: http://legalflow-case-service:8082
+          predicates:
+            - Path=/api/cases/**
 
 logging:
   level:

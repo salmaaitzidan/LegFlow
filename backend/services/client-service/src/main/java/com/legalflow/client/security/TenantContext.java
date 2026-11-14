@@ -24,9 +24,27 @@ public final class TenantContext {
     }
 
     /** Identifiant de la fiche client liée à l'utilisateur CLIENT (claim posé par un administrateur dans Keycloak). */
-    public static UUID requireClientId() {
-        return requireUuidClaim("clientId");
-    }
+    public static Jwt requireJwt() {
+            var authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (!(authentication instanceof JwtAuthenticationToken jwtAuthenticationToken)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Missing authenticated JWT.");
+            }
+            return jwtAuthenticationToken.getToken();
+        }
+
+        /** Utilise le claim 'clientId' s'il est présent, sinon se rabat sur l'UUID Keycloak ('sub'). */
+        public static UUID requireClientId() {
+            Jwt jwt = requireJwt();
+            Object claim = jwt.getClaim("clientId");
+            if (claim != null && !claim.toString().isBlank()) {
+                try {
+                    return UUID.fromString(claim.toString());
+                } catch (IllegalArgumentException ex) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "JWT claim 'clientId' is malformed.");
+                }
+            }
+            return requireUserId();
+        }
 
     /** Vrai si l'utilisateur est ADMIN, LAWYER ou SECRETARY ; faux pour un CLIENT. */
     public static boolean isStaff() {

@@ -44,29 +44,63 @@ public class ClientService {
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Clients cannot list clients.");
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Client findCurrentClient() {
         return findById(TenantContext.requireClientId());
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Client findById(UUID id) {
         UUID tenantId = TenantContext.requireLawFirmId();
-        // Un utilisateur CLIENT ne peut lire que sa propre fiche (réponse 404 pour ne rien révéler des autres)
         if (!TenantContext.isStaff() && !id.equals(TenantContext.requireClientId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Client not found: " + id);
         }
-        Client client = clientRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Client not found: " + id));
+
+        var existing = clientRepository.findById(id);
+        if (existing.isEmpty()) {
+            // Auto-création si l'utilisateur connecté est le CLIENT lui-même
+            if (!TenantContext.isStaff() && id.equals(TenantContext.requireClientId())) {
+                return autoProvisionClient(id, tenantId);
+            }
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Client not found: " + id);
+        }
+
+        Client client = existing.get();
         if (!tenantId.equals(client.getLawFirmId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Client not found: " + id);
         }
         if (!TenantContext.isOfficeStaff() && TenantContext.isLawyer()
                 && !client.getLawyerIds().contains(TenantContext.requireUserId())) {
-            // 404 plutôt que 403 : on ne révèle pas l'existence des clients des autres avocats.
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Client not found: " + id);
         }
         return client;
+    }
+
+    private Client autoProvisionClient(UUID clientId, UUID tenantId) {
+        var jwt = TenantContext.requireJwt();
+        String email = jwt.getClaimAsString("email");
+        if (email == null || email.isBlank()) {
+            email = jwt.getClaimAsString("preferred_username") + "@legalflow.local";
+        }
+
+        var byEmail = clientRepository.findByEmail(email);
+        if (byEmail.isPresent()) {
+            return byEmail.get();
+        }
+
+        String firstName = jwt.getClaimAsString("given_name");
+        String lastName = jwt.getClaimAsString("family_name");
+        if (firstName == null || firstName.isBlank()) {
+            firstName = jwt.getClaimAsString("preferred_username");
+        }
+        if (lastName == null || lastName.isBlank()) {
+            lastName = "Client";
+        }
+
+        Client newClient = new Client(tenantId, firstName, lastName, email, null, null);
+        newClient.setId(clientId);
+        LOGGER.info("Auto-provisioning client profile for Keycloak user: {} (id={})", email, clientId);
+        return clientRepository.save(newClient);
     }
 
     @Transactional

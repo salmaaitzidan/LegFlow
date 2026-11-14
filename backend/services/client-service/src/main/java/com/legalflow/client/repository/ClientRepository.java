@@ -4,6 +4,7 @@ import com.legalflow.client.domain.Client;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import java.util.Optional;
 
 import java.util.List;
 import java.util.UUID;
@@ -11,6 +12,7 @@ import java.util.UUID;
 public interface ClientRepository extends JpaRepository<Client, UUID> {
 
     List<Client> findAllByLawFirmId(UUID lawFirmId);
+    Optional<Client> findByEmail(String email);
 
     /** Clients dont l'avocat donné est en charge. */
     @Query("select c from Client c where c.lawFirmId = :lawFirmId and :lawyerId member of c.lawyerIds")
